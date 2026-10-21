@@ -49,7 +49,7 @@ for rb in "${BACKBONES[@]}"; do
     --id2name_path "$ID2NAME" \
     --item_num "$ITEM_NUM" \
     --output_dir "$OUT/policy_reward-$rb" \
-    --num_generations 8 --max_steps "$GRPO_STEPS"
+    --num_generations 4 --max_steps "$GRPO_STEPS"
 done
 
 for rb in "${BACKBONES[@]}"; do

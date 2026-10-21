@@ -30,7 +30,8 @@ OUTPUT_PATH = "bad_case_analysis/vllm_grpo_results_ranking_v1.jsonl"
 def generate_inference_prompt(item_ids, id2name, id2desc):
     instruction = "You are to analyze a list of item titles and descriptions provided by a user. Your task is to identify any item(s) that do not align with the main interests reflected by the majority of the items. After identifying these noise items, suggest replaced items that better match the user's interests."
     
-    example = 
+    # Few-shot example is disabled; the prompt carries only the instruction and input.
+    example = ""
     formatted_items = []
     for idx in item_ids:
         title = id2name.get(idx, "Unknown Title")
@@ -57,8 +58,7 @@ def main():
     sampling_params = SamplingParams(
         temperature=0.7,
         top_p=0.9,
-        max_tokens=256,
-        repetition_penalty=1.1,
+        max_tokens=128,
         stop=["<|endoftext|>", "###"]
     )
 

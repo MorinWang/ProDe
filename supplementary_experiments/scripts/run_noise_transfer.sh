@@ -49,7 +49,7 @@ for a in 0.2 0.3; do
     --reward_backbone sasrec --reward_model_path "$REWARD_CKPT" \
     --dataset_type "$DATASET" --model_path "$SFT_MODEL" \
     --train_data_path "${TRAIN_JSON[$a]}" --id2name_path "$ID2NAME" --item_num "$ITEM_NUM" \
-    --output_dir "$OUT/policy_matched_alpha${a}" --num_generations 8 --max_steps "$GRPO_STEPS"
+    --output_dir "$OUT/policy_matched_alpha${a}" --num_generations 4 --max_steps "$GRPO_STEPS"
   python denoise_trainset.py \
     --policy_model "$OUT/policy_matched_alpha${a}/final_merged_16bit" --source_dir "${NOISY_DIR[$a]}" \
     --id2name "$ID2NAME" --id2desc "$ID2DESC" \

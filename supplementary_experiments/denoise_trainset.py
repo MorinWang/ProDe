@@ -93,8 +93,8 @@ def main():
     llm = LLM(model=args.policy_model, tensor_parallel_size=args.tp,
               gpu_memory_utilization=args.gpu_mem, trust_remote_code=True,
               dtype="bfloat16", max_model_len=2048, enforce_eager=True)
-    sp = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=256,
-                        repetition_penalty=1.1, stop=["<|endoftext|>", "###"])
+    sp = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=128,
+                        stop=["<|endoftext|>", "###"])
 
     print(f"[denoise] generating for {len(prompts)} training sequences ...")
     outputs = llm.generate(prompts, sp)

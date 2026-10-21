@@ -68,10 +68,10 @@ def train_grpo_sensitivity(
     constant_mode="default",
     f1_reward_type="shaped",
     format_weight=1.0,
-    lr=5e-6,
+    lr=1e-5,
     batch_size=1,
     acc_steps=4,
-    num_generations=8,
+    num_generations=4,
     max_steps=500,
     num_train_epochs=1,
     lora_r=32,
@@ -134,7 +134,7 @@ def train_grpo_sensitivity(
     )
 
     raw = load_dataset("json", data_files=train_data_path, split="train")
-    raw = raw.shuffle(seed=42).select(range(min(1000, len(raw))))
+    raw = raw.shuffle(seed=42)
     dataset = raw.map(preprocess_dataset, remove_columns=raw.column_names)
 
     with open(id2name_path, "r", encoding="utf-8") as f:
@@ -172,6 +172,7 @@ def train_grpo_sensitivity(
 
     cfg = dict(
         output_dir=output_dir, learning_rate=lr,
+        beta=0.01,
         adam_beta1=0.9, adam_beta2=0.99, weight_decay=0.1,
         warmup_ratio=0.1, lr_scheduler_type="cosine",
         optim="paged_adamw_8bit" if load_in_4bit else "adamw_torch",

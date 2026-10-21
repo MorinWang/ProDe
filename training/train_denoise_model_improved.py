@@ -47,8 +47,8 @@ def train(
     
     batch_size: int = 64,
     micro_batch_size: int = 8,
-    num_epochs: int = 50,
-    learning_rate: float = 3e-5,  
+    num_epochs: int = 3,
+    learning_rate: float = 5e-4,
     cutoff_len: int = 256,
     
     lora_r: int = 32,  

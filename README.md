@@ -1,280 +1,167 @@
-Large Language Model for Denoising Sequential Recommendation
+# ProDe — Generative Sequence Denoising with Reinforcement Learning for Robust Sequential Recommendation
+
+ProDe is a two-stage framework that edits noisy user behavior sequences with a large
+language model policy. Stage 1 adapts a pretrained LLM by supervised fine-tuning on
+synthetically corrupted windows; Stage 2 optimizes the editing policy with Group
+Relative Policy Optimization (GRPO) against a fused reward. At deployment, only the
+trained policy is used: it edits each downstream training window once, offline, and
+the downstream recommender is then trained from scratch on the edited data — no
+reward, label, or reference recommender is involved at this stage.
+
+> The training scripts now default to the paper's reported settings (§5.3); you only
+> need to supply your own SFT checkpoint, data, catalog mappings, and frozen
+> reference-recommender checkpoint. Machine-local paths in the shell scripts must be
+> edited before use.
 
 ---
 
-## 📖 Project Introduction
+## Method in brief
 
-This project uses GRPO (Generative Reinforcement Learning with Policy Optimization) to train large language models for noise identification and removal in sequential recommendation.
+A window consists of a prefix `h` and the next interaction `y`. The policy outputs,
+in a fixed two-line format, the items it judges noisy and an in-catalog replacement
+for each. Let `M0` be a frozen reference recommender trained on the training split of
+the original, uninjected data; it is used only to score edits and is never updated.
 
-**Core Features**:
-- ✅ Identify noise items in user behavior sequences
-- ✅ Provide denoising explanations
-- ✅ Support multiple F1 reward strategies
-- ✅ Efficient training based on Unsloth
+The Stage-2 reward `R(w, a)` combines three terms (equal weight `(1,1,1)` in the
+paper):
+
+| Paper term | Role | Implementation in this repo |
+|---|---|---|
+| **Noise-identification reward** `R_noise` | Penalizes missing or false noise detection using the synthetic-corruption labels; active in training only | `f1_reward_type` family in `training/improved_reward_funcs.py` (`shaped` / `action` / `multi`) |
+| **Validity reward** `R_valid` | Penalizes off-catalog (hallucinated) replacement strings; requires no labels | `validity_reward_func` in `training/train_grpo_unsloth_with_sasrec.py` |
+| **Ranking reward `R_rec` (SRM)** | Graded credit from the rank of `y` under `M0` before/after the edit, via the Stratified Reward Mapping with stratum boundaries `tau1/tau2 = 50/200` | `use_sasrec_reward=True`, `sasrec_reward_mapping="stratified"` (`training/sasrec_reward.py`); the decoupling package implements SRM for all backbones (`supplementary_experiments/recmodel_reward.py`) |
+
+A separate `format_reward_func` encourages the fixed two-line output format during
+training and is an auxiliary engineering term, not one of the three paper rewards.
 
 ---
 
-## 🚀 Quick Start
+## Repository layout
 
-### 1. Install Dependencies
+```
+ProDE/
+├── README.md
+├── requirements.txt
+│
+├── training/
+│   ├── train_denoise_model_improved.py   # Stage 1: SFT on synthetically corrupted windows (LoRA)
+│   ├── train_grpo_unsloth_with_sasrec.py # Stage 2: GRPO policy optimization (Unsloth + TRL)
+│   ├── improved_reward_funcs.py           # R_noise F1 variants
+│   ├── sasrec_reward.py                   # SRM ranking reward under the frozen SASRec M0
+│   ├── grpo_monitoring_callback.py        # Training monitoring
+│   └── rollout_logging_callback.py        # Rollout sample logging
+│
+├── supplementary_experiments/
+│   ├── README.md                          # Appendix experiment guide (start here for these)
+│   ├── recmodel_reward.py                 # SRM for GRU4Rec / SASRec / BERT4Rec reference recommenders
+│   ├── configurable_srm_reward.py         # Configurable fusion weights, tau1/tau2, constant mode
+│   ├── train_grpo_decouple.py             # Reward-backbone decoupling policy training
+│   ├── train_grpo_sensitivity.py         # Reward hyperparameter sensitivity policy training
+│   ├── denoise_trainset.py                # Offline editing of a downstream train.csv (vLLM)
+│   ├── downstream_eval.py                  # Train + evaluate a downstream recommender, dump JSON
+│   ├── benchmark_cost.py                  # Denoising latency / throughput measurement
+│   ├── aggregate_matrix.py                # 3x3 reward-vs-evaluator matrix
+│   ├── aggregate_generic.py               # Generic NDCG/HR aggregation
+│   └── scripts/                           # Orchestration shell scripts
+│
+├── sasrec/SASRec_code/                    # Reference-recommender / downstream backbone code
+├── inference/                             # Standalone policy inference and checkpoint tools
+├── data_processing/                      # Noise injection and training-set construction helpers
+└── scripts/                               # Legacy F1-strategy experiment drivers (not the paper entry)
+```
+
+---
+
+## Setup
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Main dependencies:
-- Python >= 3.8
-- PyTorch >= 2.0
-- transformers
-- unsloth
-- trl
+The package expects: the SFT checkpoint, the training windows, the catalog
+mapping (`id2name`, optionally `id2desc`), and a frozen reference-recommender
+checkpoint for `R_rec`. Data and checkpoint paths are passed per run; several
+shell scripts carry placeholder machine-local paths and must be edited before use.
 
-### 2. Prepare Data
+### Stage 1 — Supervised fine-tuning
 
-#### Method 1: Construct Data from CSV (Recommended) ⭐
+`training/train_denoise_model_improved.py` adapts the pretrained LLM on
+synthetically corrupted windows with LoRA. It exposes `lora_r`, `lora_alpha`,
+`lora_dropout`, `num_epochs`, `learning_rate`, and `batch_size`.
 
-If you have raw data in CSV format, use the provided tools to automatically construct training data:
+### Stage 2 — GRPO policy optimization
 
-```bash
-cd data_processing/process/
+`training/train_grpo_unsloth_with_sasrec.py` (Fire CLI) starts from the SFT
+checkpoint. Key switches:
 
-# Construct training data
-python create_train_with_description_from_csv.py \
-    --input your_train.csv \
-    --output train_with_description.json \
-    --id2name id2name.json \
-    --id2description id2description.json
+- `--f1_reward_type {shaped,action,multi,none}` selects the `R_noise` variant;
+- `R_rec` (SRM ranking reward) is enabled by default (`use_sasrec_reward=True`,
+  `sasrec_reward_mapping="stratified"`);
+- `validity_reward_func` (`R_valid`) is bound to the catalog and always included;
+- `--num_generations`, `--learning_rate`, `--batch_size`,
+  `--gradient_accumulation_steps`, `--train_file`, `--model_path`,
+  `--output_dir` control the run.
 
-# Construct test data
-python create_test_with_description_from_csv.py \
-    --input your_test.csv \
-    --output test_with_description.json \
-    --id2name id2name.json \
-    --id2description id2description.json
-```
+### Offline editing and downstream evaluation
 
-**Detailed Instructions**: See `data_processing/README_DATA.md`
+`supplementary_experiments/denoise_trainset.py` runs the trained policy over a
+`train.csv`, grounds predicted noise/replacement titles to item ids by exact
+catalog match, and writes the edited dataset. `supplementary_experiments/
+downstream_eval.py` trains a downstream recommender (`sasrec` / `bert4rec` /
+`gru4rec`) on the edited set and writes `{"NDCG@20": ...}` to JSON; the
+unedited noisy-training set serves as the `None` baseline.
 
 ---
 
-#### Method 2: Manually Prepare JSON Data
+## Reported configuration (paper §5.3)
 
-Data format: JSON format, one sample per line
+These values are now the script defaults; the table records them for reference.
 
-```json
-{
-  "user_id": "user_123",
-  "history": ["Item_A", "Item_B", "Item_C"],
-  "noise_items": ["Item_B"],
-  "description": "..."
+| Component | Paper setting |
+|---|---|
+| Policy | Llama-3.1-8B-Instruct (Llama-3.2-3B for the smaller variant) |
+| SFT LoRA | rank 32, scaling 64, dropout 0.05, 3 epochs, lr `5e-4`, batch 64 |
+| GRPO group size `G` | 4 |
+| KL coefficient `beta` | 0.01 toward the reference policy |
+| GRPO lr / schedule | `1e-5`, cosine, warmup ratio 0.1 |
+| Optimizer | AdamW `(beta1, beta2)=(0.9, 0.99)`, weight decay 0.1 |
+| Prompt length | at most 512 tokens |
+| Reward weights | `(1,1,1)`; SRM boundaries `tau1/tau2 = 50/200` |
+| Reference recommender `M0` | frozen SASRec trained on the training split |
+| Inference | vLLM, temperature 0.7, top-p 0.9, at most 128 new tokens |
+| Edit budget | 10–30% of the positions of a window; titles matched exactly |
+| Downstream SASRec | emb 64, input length 10 |
+| Downstream BERT4Rec | emb 256, 4 blocks, 4 heads |
+| Downstream training | Adam, lr `1e-3`, batch 256 |
+| Hardware | four 40 GB A100 GPUs |
+
+---
+
+## Appendix experiments
+
+See `supplementary_experiments/README.md` for the four appendix studies, which
+share the same infrastructure:
+
+- **Reward-backbone decoupling** — GRU4Rec / SASRec / BERT4Rec as `M0`, 3x3
+  reward-vs-evaluator matrix.
+- **Reward hyperparameter sensitivity** — fusion weights, `tau1/tau2`, and
+  constant-deformation modes (`default` / `flattened` / `shifted`).
+- **Computational cost** — batched vLLM denoising latency and throughput.
+- **Cross-intensity noise transfer** — a policy trained on 10% noise applied to
+  20% / 30% noise sets (inference only).
+
+---
+
+## Citation
+
+```bibtex
+@article{prode2026,
+  title={Generative Sequence Denoising with Reinforcement Learning for Robust Sequential Recommendation},
+  journal={ACM Transactions on Information Systems (TOIS)},
+  year={2026}
 }
 ```
 
-### 3. Train Model
+## License
 
-#### Single Strategy Training
-```bash
-bash scripts/run_grpo_action_reward.sh
-```
-
-#### Parallel Training of Multiple Strategies
-```bash
-bash scripts/run_all_f1_strategies.sh
-```
-
-### 4. Inference
-
-```bash
-python inference/infer_grpo.py \
-    --model_path outputs/grpo_action_reward_v1/final_lora \
-    --input_file test_data.json \
-    --output_file results.json
-```
-
----
-
-## 📁 Directory Structure
-
-```
-LLM4DSR_Package/
-├── README.md                  # This file
-├── requirements.txt           # Python dependencies
-│
-├── training/                  # Training code
-│   ├── train_grpo_unsloth_with_sasrec.py  # Main training script
-│   ├── improved_reward_funcs.py           # Reward functions
-│   ├── grpo_monitoring_callback.py        # Monitoring
-│   └── rollout_logging_callback.py        # Rollout logging
-│
-├── scripts/                   # Training scripts
-│   ├── run_grpo_action_reward.sh          # Action reward strategy
-│   ├── run_grpo_shaped_f1.sh              # Shaped F1 strategy
-│   ├── run_grpo_multi_component.sh        # Multi-component strategy
-│   ├── run_all_f1_strategies.sh           # Parallel training
-│   └── resume_*.sh                        # Resume training scripts
-│
-├── inference/                 # Inference code
-│   ├── infer_grpo.py                      # Model inference
-│   ├── evaluate_denoise_model.py          # Model evaluation
-│   └── merge_model.py                     # Merge LoRA
-│
-├── data_processing/           # Data processing ⭐
-│   ├── README_DATA.md                      # Complete data processing guide
-│   ├── generate_noise_data.py
-│   ├── encode_with_description.py
-│   ├── check_data.py
-│   └── process/                           # Core data construction tools
-│       ├── create_train_with_description_from_csv.py  # Training data construction ⭐
-│       ├── create_test_with_description_from_csv.py   # Test data construction ⭐
-│       └── prompts.py                     # Prompt templates
-│
-├── sasrec/                    # SASRec related
-│   ├── sasrec_reward.py
-│   └── SASRec_code/
-│
-└── docs/                      # Documentation
-    ├── CURRENT_TRAINING_SUMMARY.md
-    ├── F1_STRATEGIES_COMPARISON.md
-    └── ...
-```
-
----
-
-## 🎯 Reward Strategy System
-
-### Basic Stage: Three F1 Reward Strategies
-
-#### 1. Action Reward ⭐ Recommended
-- **Features**: Encourages the model to attempt denoising
-- **Weight**: 2.0
-- **Applicable**: Pursuing high coverage
-- **Target**: F1 reaches 0.7+
-
-#### 2. Shaped F1
-- **Features**: Smooth reward curve
-- **Weight**: 1.5
-- **Applicable**: Pursuing stable training
-
-#### 3. Multi-Component
-- **Features**: Comprehensive evaluation of P+R+F1
-- **Weight**: 1.5
-- **Applicable**: Need fine-grained control
-
-For details, see: `docs/F1_STRATEGIES_COMPARISON.md`
-
----
-
-### Advanced Stage: SASRec Reward (Enable after F1>0.7)
-
-**⚠️ Important**: Only enable after F1 reaches 0.7+!
-
-#### Strategy 1: NDCG Mode
-- **Coverage**: ~11% (sparse)
-- **Focus**: Top-50 accuracy
-- **Applicable**: Simple datasets
-
-#### Strategy 2: Ranking Mode ⭐⭐⭐ Highly Recommended
-- **Coverage**: ~95% (dense)
-- **Focus**: Overall ranking improvement
-- **Features**: Gradient clipping, more stable
-- **Applicable**: Most scenarios
-
-For details, see: `sasrec/README_SASREC.md`
-
----
-
-### Recommended Training Workflow
-
-```bash
-# Stage 1: Basic Training (F1: 0 → 0.7)
-bash scripts/run_grpo_action_reward.sh  # Only F1 reward
-
-# Stage 2: Advanced Optimization (F1: 0.7 → 0.8+)
-# Enable SASRec (ranking mode)
-```
-
----
-
-## 📊 Training Configuration
-
-### Default Hyperparameters
-
-```python
-batch_size = 4
-gradient_accumulation_steps = 4
-learning_rate = 5e-6
-max_steps = 500
-lora_r = 32
-load_in_4bit = True
-```
-
-### Modify Configuration
-
-Edit the corresponding shell script, for example `scripts/run_grpo_action_reward.sh`
-
----
-
-## 💡 Usage Tips
-
-### 1. Monitor Training
-
-**TensorBoard**:
-```bash
-tensorboard --logdir outputs/ --port 6006
-```
-
-**View Logs**:
-```bash
-tail -f logs/resume_*.log
-```
-
-### 2. Resume from Checkpoint
-
-```bash
-bash scripts/resume_grpo_action_reward.sh
-```
-
-### 3. View Rollout Samples
-
-Training automatically prints samples every 100 steps to:
-```
-outputs/*/rollout_samples/
-```
-
----
-
-## 🔧 FAQ
-
-### Q1: How to resume after training interruption?
-A: Use `resume_*.sh` scripts, which will automatically resume from the latest checkpoint
-
-### Q2: How to choose F1 strategy?
-A: 
-- Need high recall → Action reward
-- Need stable training → Shaped F1
-- Need balanced P/R → Multi-component
-
-### Q3: What to do if running out of memory?
-A: 
-- Reduce `batch_size`
-- Increase `gradient_accumulation_steps`
-- Use `load_in_4bit=True`
-
-### Q4: How to evaluate model performance?
-A: 
-```bash
-python inference/evaluate_denoise_model.py \
-    --model_path outputs/grpo_*/checkpoint-500 \
-    --test_file test_data.json
-```
-
----
-
-## 📚 Detailed Documentation
-
-- `docs/CURRENT_TRAINING_SUMMARY.md` - Current training summary
-- `docs/F1_STRATEGIES_COMPARISON.md` - Strategy comparison
-- `docs/ROLLOUT_LOGGING_GUIDE.md` - Rollout feature guide
-- `docs/DATA_PREPARATION_GUIDE.md` - Data preparation
-- `docs/F1_IMPROVEMENT_GUIDE.md` - F1 improvement guide
-
+MIT License.

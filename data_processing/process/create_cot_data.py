@@ -76,7 +76,7 @@ Analyze the sequence. Explain why '{noise_title}' conflicts with the user's core
 
 def generate_cot_analysis(user_content):
     
-    system_prompt = 
+    system_prompt = ""
     
     try:
         response = client.chat.completions.create(

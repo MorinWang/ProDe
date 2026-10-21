@@ -32,7 +32,7 @@ run_variant () {
     --dataset_type "$DATASET" --model_path "$SFT_MODEL" \
     --train_data_path "$TRAIN_JSON" --id2name_path "$ID2NAME" --item_num "$ITEM_NUM" \
     --w1 "$w1" --w2 "$w2" --w3 "$w3" --tau1 "$tau1" --tau2 "$tau2" --constant_mode "$mode" \
-    --output_dir "$policy" --num_generations 8 --max_steps "$GRPO_STEPS"
+    --output_dir "$policy" --num_generations 4 --max_steps "$GRPO_STEPS"
 
   python denoise_trainset.py \
     --policy_model "$policy/final_merged_16bit" --source_dir "$NOISY_DATA_DIR" \

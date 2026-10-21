@@ -275,10 +275,10 @@ def train_grpo(
     id2name_path: str = None,  
     sasrec_model_path: str = None,  
     output_dir: str = None,  
-    lr: float = 5e-6,
+    lr: float = 1e-5,
     batch_size: int = 1,
     acc_steps: int = 4,
-    num_generations: int = 8,  
+    num_generations: int = 4,
     max_steps: int = -1,  
     num_train_epochs: int = 1,  
     lora_r: int = 32,
@@ -288,12 +288,12 @@ def train_grpo(
     use_format_reward: bool = True,  
     f1_reward_type: str = "shaped",  
     f1_reward_weight: float = 1.0,  
-    use_sasrec_reward: bool = False,  
+    use_sasrec_reward: bool = True,
     sasrec_reward_weight: float = 1.0,  
     sasrec_reward_mode: str = "ranking",  
     sasrec_reward_mapping: str = "stratified",  
     resume_from_checkpoint: str = None,  
-    use_dynamic_reward_weights: bool = True,  
+    use_dynamic_reward_weights: bool = False,
     format_decay_start: float = 0.2,  
     format_decay_end: float = 0.5,    
     quality_warmup_start: float = 0.1,  
@@ -375,7 +375,7 @@ def train_grpo(
     
     print("\n[3/6] Loading and preprocessing dataset...")
     raw_dataset = load_dataset("json", data_files=train_data_path, split="train")
-    raw_dataset = raw_dataset.shuffle(seed=42).select(range(min(1000, len(raw_dataset))))  
+    raw_dataset = raw_dataset.shuffle(seed=42)
     dataset = raw_dataset.map(preprocess_dataset, remove_columns=raw_dataset.column_names)
     print(f"✅ Dataset prepared: {len(dataset)} samples")
     
@@ -570,6 +570,7 @@ def train_grpo(
     config_kwargs = {
         "output_dir": output_dir,
         "learning_rate": lr,
+        "beta": 0.01,
         "adam_beta1": 0.9,
         "adam_beta2": 0.99,
         "weight_decay": 0.1,
