@@ -8,11 +8,6 @@ trained policy is used: it edits each downstream training window once, offline, 
 the downstream recommender is then trained from scratch on the edited data — no
 reward, label, or reference recommender is involved at this stage.
 
-> The training scripts now default to the paper's reported settings (§5.3); you only
-> need to supply your own SFT checkpoint, data, catalog mappings, and frozen
-> reference-recommender checkpoint. Machine-local paths in the shell scripts must be
-> edited before use.
-
 ---
 
 ## Method in brief
@@ -149,18 +144,6 @@ share the same infrastructure:
 - **Computational cost** — batched vLLM denoising latency and throughput.
 - **Cross-intensity noise transfer** — a policy trained on 10% noise applied to
   20% / 30% noise sets (inference only).
-
----
-
-## Citation
-
-```bibtex
-@article{prode2026,
-  title={Generative Sequence Denoising with Reinforcement Learning for Robust Sequential Recommendation},
-  journal={ACM Transactions on Information Systems (TOIS)},
-  year={2026}
-}
-```
 
 ## License
 
